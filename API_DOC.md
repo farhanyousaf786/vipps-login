@@ -1,14 +1,11 @@
-# Vipps Login Backend API
+# Vipps Login Backend API - Complete Guide
 
-Simple overview of the backend for Vipps Login.
+## 1. Base URLs
 
----
-
-## 1. Base URL
-
-For local development:
-
-- **Base URL**: `http://localhost:3000`
+| Environment | URL |
+|-------------|-----|
+| Local | `http://localhost:3000` |
+| Production | `https://vipps-login-production.up.railway.app` |
 
 All auth routes are under `/auth`.
 
@@ -16,107 +13,253 @@ All auth routes are under `/auth`.
 
 ## 2. Endpoints Overview
 
-- `GET /auth/health` – Health check
-- `GET /auth/vipps/login` – Start Vipps login, returns `authUrl` and `sessionId`
-- `GET /auth/vipps/callback` – Vipps redirects here after user login (used by Vipps, not by Postman)
-- `POST /auth/vipps/session` – Exchange `sessionId` for JWT and user info (used by iOS app)
-- `POST /auth/logout` – Logout and delete session
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/auth/health` | Health check |
+| GET | `/auth/vipps/login` | Start login, returns `authUrl` and `sessionId` |
+| GET | `/auth/vipps/callback` | Vipps redirects here (not called by app) |
+| POST | `/auth/vipps/session` | Exchange `sessionId` for JWT and user info |
+| POST | `/auth/logout` | Logout and delete session |
 
 ---
 
-## 3. Testing with Postman
+## 3. Prerequisites - Vipps Portal Setup
 
-### 3.1 Health Check
+**You MUST complete these steps before login will work:**
 
-- **Method**: GET
-- **URL**: `http://localhost:3000/auth/health`
-- **Headers**: none required
+### 3.1 Register Redirect URI in Vipps Portal
 
-**Expected Response (200):**
+1. Go to [portal.vippsmobilepay.com](https://portal.vippsmobilepay.com)
+2. Login to your account
+3. Find your sales unit / application
+4. Look for **"Redirect URIs"** or **"Login settings"**
+5. Add this URL:
+   ```
+   https://vipps-login-production.up.railway.app/auth/vipps/callback
+   ```
+6. Save changes
+
+**Important:** The redirect URI must match EXACTLY what's in your backend `.env` file.
+
+### 3.2 Verify Your Credentials
+
+Make sure you have these from Vipps portal:
+- `client_id`
+- `client_secret`
+- `subscription_key` (Ocp-Apim-Subscription-Key)
+- `merchant_serial_number`
+
+---
+
+## 4. iOS App Setup
+
+### 4.1 Register URL Scheme in Xcode
+
+Your app needs to handle the callback URL `osloinside://auth/callback`.
+
+1. Open your Xcode project
+2. Click on your project in the navigator
+3. Select your target
+4. Go to **"Info"** tab
+5. Expand **"URL Types"**
+6. Click **"+"** to add new URL type
+7. Set:
+   - **Identifier**: `com.yourcompany.osloinside`
+   - **URL Schemes**: `osloinside`
+   - **Role**: Editor
+
+### 4.2 Handle Incoming URL in App
+
+In your `App.swift` or `SceneDelegate`:
+
+```swift
+// SwiftUI App
+@main
+struct YourApp: App {
+    var body: some Scene {
+        WindowGroup {
+            ContentView()
+                .onOpenURL { url in
+                    handleVippsCallback(url)
+                }
+        }
+    }
+}
+
+func handleVippsCallback(_ url: URL) {
+    // url = osloinside://auth/callback?success=true&sessionId=xxx
+    let components = URLComponents(url: url, resolvingAgainstBaseURL: false)
+    let success = components?.queryItems?.first(where: { $0.name == "success" })?.value
+    let sessionId = components?.queryItems?.first(where: { $0.name == "sessionId" })?.value
+    let error = components?.queryItems?.first(where: { $0.name == "error" })?.value
+    
+    if success == "true", let sessionId = sessionId {
+        // Call POST /auth/vipps/session with sessionId
+        fetchSession(sessionId: sessionId)
+    } else {
+        // Show error to user
+        print("Login failed: \(error ?? "Unknown error")")
+    }
+}
+```
+
+---
+
+## 5. Complete Login Flow
+
+### Step 1: iOS App Starts Login
+
+```
+iOS App                         Backend                          Vipps
+   |                               |                               |
+   |-- GET /auth/vipps/login ----->|                               |
+   |                               |                               |
+   |<-- { authUrl, sessionId } ----|                               |
+   |                               |                               |
+   | (save sessionId locally)      |                               |
+   |                               |                               |
+   | (open authUrl in browser) ----------------------------------->|
+   |                               |                               |
+```
+
+### Step 2: User Logs In with Vipps
+
+```
+iOS App                         Backend                          Vipps
+   |                               |                               |
+   |                               |                 (user logs in)|
+   |                               |                               |
+   |                               |<-- callback?code=xxx&state=yyy|
+   |                               |                               |
+   |                               |-- exchange code for tokens -->|
+   |                               |                               |
+   |                               |<-- access_token, user info ---|
+   |                               |                               |
+   |                               | (store in session)            |
+   |                               |                               |
+   |<-- redirect to osloinside://--|                               |
+   |    ?success=true&sessionId=xx |                               |
+```
+
+### Step 3: iOS App Gets User Data
+
+```
+iOS App                         Backend                          Vipps
+   |                               |                               |
+   | (receives deep link)          |                               |
+   |                               |                               |
+   |-- POST /auth/vipps/session -->|                               |
+   |   { sessionId: "xxx" }        |                               |
+   |                               |                               |
+   |<-- { token, user, expiresAt }-|                               |
+   |                               |                               |
+   | (save token in Keychain)      |                               |
+   | (navigate to home screen)     |                               |
+```
+
+---
+
+## 6. API Details
+
+### 6.1 Health Check
+
+**Request:**
+```
+GET /auth/health
+```
+
+**Response (200):**
 ```json
 {
   "status": "ok",
-  "timestamp": "2025-01-01T12:00:00.000Z"
+  "timestamp": "2025-12-04T22:00:00.000Z"
 }
 ```
 
 ---
 
-### 3.2 Start Vipps Login
+### 6.2 Start Login
 
-This simulates the app asking the backend to start a Vipps login.
+**Request:**
+```
+GET /auth/vipps/login
+```
 
-- **Method**: GET
-- **URL**: `http://localhost:3000/auth/vipps/login`
-- **Headers**: none required
-
-**Expected Response (200):**
+**Response (200):**
 ```json
 {
-  "authUrl": "https://apitest.vipps.no/access-management-1.0/access/oauth2/auth?...",
-  "sessionId": "<uuid>"
+  "authUrl": "https://api.vipps.no/access-management-1.0/access/oauth2/auth?client_id=xxx&...",
+  "sessionId": "ea6fae91-3cc4-4fd2-89de-874bec5c53de"
 }
 ```
 
-- `authUrl`: open this URL in browser / app to start Vipps login.
-- `sessionId`: used later by the iOS app.
-
-> In real flow, the **user is redirected to Vipps**, logs in, and Vipps calls the `/auth/vipps/callback` endpoint. This is hard to fully simulate in Postman, but the iOS app will handle this flow.
+**iOS App should:**
+1. Save `sessionId` locally
+2. Open `authUrl` in Safari or ASWebAuthenticationSession
 
 ---
 
-### 3.3 Get Session and JWT (after successful login)
+### 6.3 Callback (Handled by Backend)
 
-Once Vipps has redirected back and the backend has stored tokens + user in the session, the iOS app calls this endpoint.
+This endpoint is called by Vipps, NOT by your app.
 
-You can test it in Postman by using a known `sessionId` from `/auth/vipps/login` **after** a successful login.
+**URL:** `/auth/vipps/callback?code=xxx&state=yyy`
 
-- **Method**: POST
-- **URL**: `http://localhost:3000/auth/vipps/session`
-- **Headers**:
-  - `Content-Type: application/json`
-- **Body (raw JSON)**:
-```json
+**Backend will:**
+1. Verify state matches session
+2. Exchange code for tokens with Vipps
+3. Fetch user info from Vipps
+4. Store in session
+5. Redirect to: `osloinside://auth/callback?success=true&sessionId=xxx`
+
+---
+
+### 6.4 Get Session (Exchange for JWT)
+
+**Request:**
+```
+POST /auth/vipps/session
+Content-Type: application/json
+
 {
-  "sessionId": "<session-id-from-login>"
+  "sessionId": "ea6fae91-3cc4-4fd2-89de-874bec5c53de"
 }
 ```
 
-**Successful Response (200):**
+**Response (200):**
 ```json
 {
-  "token": "<jwt-token>",
-  "refreshToken": "<refresh-token>",
-  "user": { "...user fields from Vipps..." },
-  "expiresAt": "2025-01-08T12:00:00.000Z"
+  "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
+  "refreshToken": "abc123-refresh-token",
+  "user": {
+    "sub": "vipps-user-id",
+    "name": "John Doe",
+    "email": "john@example.com",
+    "phone_number": "+4712345678"
+  },
+  "expiresAt": 1735689600000
 }
 ```
-
-- `token`: JWT access token, signed with `JWT_SECRET`.
-- `refreshToken`: random ID you can store in the app if you later add refresh logic.
-- `user`: user profile from Vipps.
-- `expiresAt`: when the JWT will expire.
 
 **Error Responses:**
-- `401` – `{ "error": "Session not found or expired" }`
-- `400` – `{ "error": "sessionId is required" }`
+- `400`: `{ "error": "sessionId is required" }`
+- `401`: `{ "error": "Session not found or expired" }`
 
 ---
 
-### 3.4 Logout
+### 6.5 Logout
 
-- **Method**: POST
-- **URL**: `http://localhost:3000/auth/logout`
-- **Headers**:
-  - `Content-Type: application/json`
-- **Body (raw JSON)**:
-```json
+**Request:**
+```
+POST /auth/logout
+Content-Type: application/json
+
 {
-  "sessionId": "<session-id-from-login>"
+  "sessionId": "ea6fae91-3cc4-4fd2-89de-874bec5c53de"
 }
 ```
 
-**Successful Response (200):**
+**Response (200):**
 ```json
 {
   "success": true
@@ -125,90 +268,266 @@ You can test it in Postman by using a known `sessionId` from `/auth/vipps/login`
 
 ---
 
-## 4. iOS App Flow (High-Level)
+## 7. Testing
 
-This is how your iOS app should talk to this backend.
+### 7.1 Test with Terminal (curl)
 
-### Step 1: Start Login (Call Backend)
-
-1. iOS app calls **`GET /auth/vipps/login`**.
-2. Backend returns:
-   - `authUrl` – Vipps URL
-   - `sessionId` – backend session ID
-3. App **saves `sessionId` locally** (e.g. in memory or secure storage).
-4. App **opens `authUrl`** in browser / SFSafariViewController.
-
-### Step 2: User Logs In with Vipps
-
-1. User is in Vipps app / web.
-2. After user approves, Vipps redirects the browser to:
-   - `http://localhost:3000/auth/vipps/callback?code=...&state=...`
-3. The backend:
-   - Validates `state` with stored session.
-   - Calls Vipps token endpoint and userinfo endpoint.
-   - Stores tokens + user info in the session.
-   - Redirects to your app:
-     - `APP_REDIRECT_SCHEME://auth/callback?success=true&sessionId=<sessionId>`
-
-> You must register `APP_REDIRECT_SCHEME` (e.g. `myapp`) as a URL scheme in Xcode so your app can receive this callback.
-
-### Step 3: Handle Callback in iOS
-
-When your app is opened with a URL like:
-
-```text
-myapp://auth/callback?success=true&sessionId=<sessionId>
+**Health check:**
+```bash
+curl https://vipps-login-production.up.railway.app/auth/health
 ```
 
-1. Parse the URL query parameters:
-   - `success`
-   - `sessionId`
-   - `error` (if any)
-2. If `success=false`, show error to user.
-3. If `success=true` and you have a `sessionId`:
-   - Call **`POST /auth/vipps/session`** with:
-     - Body: `{ "sessionId": "<sessionId-from-url>" }`
-   - Backend returns:
-     - `token` (JWT)
-     - `refreshToken`
-     - `user`
-     - `expiresAt`
-4. Store `token` and `refreshToken` securely (e.g. Keychain).
-
-### Step 4: Use JWT for Authenticated Requests
-
-For your own protected APIs (not yet implemented here):
-
-- Add `Authorization` header:
-
-```http
-Authorization: Bearer <token>
+**Start login:**
+```bash
+curl https://vipps-login-production.up.railway.app/auth/vipps/login
 ```
 
-- On the backend, you would create a middleware that verifies the JWT with `JWT_SECRET` and attaches `req.user`.
+**Get session (after login):**
+```bash
+curl -X POST https://vipps-login-production.up.railway.app/auth/vipps/session \
+  -H "Content-Type: application/json" \
+  -d '{"sessionId": "your-session-id-here"}'
+```
+
+### 7.2 Test Full Flow in Browser
+
+1. Run:
+   ```bash
+   curl https://vipps-login-production.up.railway.app/auth/vipps/login
+   ```
+
+2. Copy the `authUrl` from response
+
+3. Paste `authUrl` in browser
+
+4. Login with Vipps on your phone
+
+5. After approval, browser will try to open:
+   ```
+   osloinside://auth/callback?success=true&sessionId=xxx
+   ```
+
+6. Copy the `sessionId` from URL
+
+7. Test session endpoint:
+   ```bash
+   curl -X POST https://vipps-login-production.up.railway.app/auth/vipps/session \
+     -H "Content-Type: application/json" \
+     -d '{"sessionId": "xxx"}'
+   ```
 
 ---
 
-## 5. Environment Variables Required
+## 8. Environment Variables
 
-Make sure `.env` has these values set (example):
+### Production (Railway)
 
-```env
-PORT=3000
-NODE_ENV=development
-
-VIPPS_CLIENT_ID=your_client_id_here
-VIPPS_CLIENT_SECRET=your_client_secret_here
-VIPPS_SUBSCRIPTION_KEY=your_subscription_key_here
-VIPPS_MERCHANT_SERIAL_NUMBER=your_merchant_serial_number_here
-VIPPS_API_URL=https://apitest.vipps.no
-VIPPS_REDIRECT_URI=http://localhost:3000/auth/vipps/callback
-APP_REDIRECT_SCHEME=yourappscheme
-JWT_SECRET=change_this_to_a_random_secret_key_at_least_32_chars
+```
+NODE_ENV=production
+VIPPS_CLIENT_ID=af53b2ae-ce05-4f3f-8c07-d26e2eee16b8
+VIPPS_CLIENT_SECRET=XJ68Q~Yme-Af1vseAzTp6eSH4MCfYlhgkquIWart
+VIPPS_SUBSCRIPTION_KEY=4440b081320bfdb544a301a8708d391c
+VIPPS_MERCHANT_SERIAL_NUMBER=1028040
+VIPPS_API_URL=https://api.vipps.no
+VIPPS_REDIRECT_URI=https://vipps-login-production.up.railway.app/auth/vipps/callback
+APP_REDIRECT_SCHEME=osloinside
+JWT_SECRET=your-secret-key-here
 ```
 
-Once these are set, you can:
+### Local Development
 
-1. Run `npm run dev`.
-2. Test endpoints with Postman.
-3. Implement the iOS flow exactly as described above.
+```
+NODE_ENV=development
+VIPPS_CLIENT_ID=af53b2ae-ce05-4f3f-8c07-d26e2eee16b8
+VIPPS_CLIENT_SECRET=XJ68Q~Yme-Af1vseAzTp6eSH4MCfYlhgkquIWart
+VIPPS_SUBSCRIPTION_KEY=4440b081320bfdb544a301a8708d391c
+VIPPS_MERCHANT_SERIAL_NUMBER=1028040
+VIPPS_API_URL=https://apitest.vipps.no
+VIPPS_REDIRECT_URI=http://localhost:3000/auth/vipps/callback
+APP_REDIRECT_SCHEME=osloinside
+JWT_SECRET=your-secret-key-here
+```
+
+---
+
+## 9. Troubleshooting
+
+### Error: "Invalid redirect URI"
+
+**Cause:** Redirect URI not registered in Vipps portal
+
+**Fix:** Add this URL in Vipps portal → Redirect URIs:
+```
+https://vipps-login-production.up.railway.app/auth/vipps/callback
+```
+
+---
+
+### Error: "Invalid or expired state"
+
+**Cause:** Session expired (10 min timeout) or state mismatch
+
+**Fix:** Start login again with `/auth/vipps/login`
+
+---
+
+### Error: "Session not found or expired"
+
+**Cause:** Session expired or invalid sessionId
+
+**Fix:** The login session is only valid for 10 minutes. Start login again.
+
+---
+
+### Error: 502 Bad Gateway on Railway
+
+**Cause:** App crashed or PORT issue
+
+**Fix:** 
+1. Check Railway logs for errors
+2. Remove `PORT` from environment variables (Railway sets it automatically)
+
+---
+
+### Error: "undefined" in authUrl
+
+**Cause:** Environment variables not set
+
+**Fix:** Add all required variables in Railway → Variables tab
+
+---
+
+## 10. Security Notes
+
+1. **Never expose `client_secret`** in frontend code or logs
+2. **Store JWT tokens securely** in iOS Keychain
+3. **Use HTTPS** in production (Railway provides this)
+4. **Sessions expire** after 10 minutes for security
+5. **JWT tokens expire** after 7 days (configurable)
+
+---
+
+## 11. iOS Code Example (Complete)
+
+```swift
+import Foundation
+
+class VippsAuthManager {
+    
+    static let shared = VippsAuthManager()
+    
+    private let baseURL = "https://vipps-login-production.up.railway.app"
+    private var currentSessionId: String?
+    
+    // Step 1: Start login
+    func startLogin(completion: @escaping (URL?) -> Void) {
+        guard let url = URL(string: "\(baseURL)/auth/vipps/login") else {
+            completion(nil)
+            return
+        }
+        
+        URLSession.shared.dataTask(with: url) { data, response, error in
+            guard let data = data,
+                  let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let authUrlString = json["authUrl"] as? String,
+                  let sessionId = json["sessionId"] as? String,
+                  let authUrl = URL(string: authUrlString) else {
+                completion(nil)
+                return
+            }
+            
+            self.currentSessionId = sessionId
+            completion(authUrl)
+        }.resume()
+    }
+    
+    // Step 2: Handle callback (called from onOpenURL)
+    func handleCallback(url: URL, completion: @escaping (User?) -> Void) {
+        let components = URLComponents(url: url, resolvingAgainstBaseURL: false)
+        let success = components?.queryItems?.first(where: { $0.name == "success" })?.value
+        let sessionId = components?.queryItems?.first(where: { $0.name == "sessionId" })?.value
+        
+        guard success == "true", let sessionId = sessionId else {
+            completion(nil)
+            return
+        }
+        
+        fetchSession(sessionId: sessionId, completion: completion)
+    }
+    
+    // Step 3: Fetch session and get JWT
+    private func fetchSession(sessionId: String, completion: @escaping (User?) -> Void) {
+        guard let url = URL(string: "\(baseURL)/auth/vipps/session") else {
+            completion(nil)
+            return
+        }
+        
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try? JSONSerialization.data(withJSONObject: ["sessionId": sessionId])
+        
+        URLSession.shared.dataTask(with: request) { data, response, error in
+            guard let data = data,
+                  let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let token = json["token"] as? String,
+                  let userDict = json["user"] as? [String: Any] else {
+                completion(nil)
+                return
+            }
+            
+            // Save token to Keychain (implement your own Keychain helper)
+            KeychainHelper.save(token, forKey: "auth_token")
+            
+            // Create user object
+            let user = User(
+                sub: userDict["sub"] as? String ?? "",
+                name: userDict["name"] as? String,
+                email: userDict["email"] as? String,
+                phone: userDict["phone_number"] as? String
+            )
+            
+            completion(user)
+        }.resume()
+    }
+    
+    // Logout
+    func logout(completion: @escaping (Bool) -> Void) {
+        guard let sessionId = currentSessionId,
+              let url = URL(string: "\(baseURL)/auth/logout") else {
+            completion(false)
+            return
+        }
+        
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try? JSONSerialization.data(withJSONObject: ["sessionId": sessionId])
+        
+        URLSession.shared.dataTask(with: request) { _, _, _ in
+            KeychainHelper.delete(forKey: "auth_token")
+            self.currentSessionId = nil
+            completion(true)
+        }.resume()
+    }
+}
+
+struct User {
+    let sub: String
+    let name: String?
+    let email: String?
+    let phone: String?
+}
+```
+
+---
+
+## 12. Checklist Before Going Live
+
+- [ ] Vipps credentials added to Railway environment variables
+- [ ] Redirect URI registered in Vipps portal
+- [ ] iOS URL scheme `osloinside` registered in Xcode
+- [ ] iOS app handles `onOpenURL` callback
+- [ ] Tested full login flow end-to-end
+- [ ] JWT token stored securely in Keychain
+- [ ] Error handling implemented in iOS app
