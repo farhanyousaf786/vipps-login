@@ -15,7 +15,7 @@ function createAuthSession(state) {
     vippsRefreshToken: null,
     user: null,
     createdAt: new Date(),
-    expiresAt: getExpirationDate(10) // Expires in 10 minutes
+    expiresAt: getExpirationDate(30) // Expires in 30 minutes (increased for OAuth flow)
   };
 
   sessions.set(sessionId, session);
@@ -103,6 +103,5 @@ module.exports = {
   getSessionByState,
   getSessionById,
   updateSession,
-  deleteSession,
-  cleanExpiredSessions
+  deleteSession
 };
