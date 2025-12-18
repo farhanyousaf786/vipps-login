@@ -196,7 +196,6 @@ function handleSignout(req, res) {
 }
 
 router.post('/signout', handleSignout);
-router.post('/logout', handleSignout);
 
 router.get('/health', (req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
