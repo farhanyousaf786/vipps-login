@@ -175,6 +175,29 @@ router.post('/vipps/session', (req, res) => {
   }
 });
 
+function handleSignout(req, res) {
+  try {
+    const { sessionId } = req.body;
+
+    if (!sessionId) {
+      return res.status(400).json({ error: 'sessionId is required' });
+    }
+
+    const deleted = deleteSession(sessionId);
+
+    return res.json({
+      success: deleted,
+      message: deleted ? 'Signed out' : 'Session not found'
+    });
+  } catch (error) {
+    console.error('Signout error:', error);
+    return res.status(500).json({ error: 'Failed to sign out' });
+  }
+}
+
+router.post('/signout', handleSignout);
+router.post('/logout', handleSignout);
+
 router.get('/health', (req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
 });

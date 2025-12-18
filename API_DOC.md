@@ -19,7 +19,7 @@ All auth routes are under `/auth`.
 | GET | `/auth/vipps/login` | Start login, returns `authUrl` and `sessionId` |
 | GET | `/auth/vipps/callback` | Vipps redirects here (not called by app) |
 | POST | `/auth/vipps/session` | Exchange `sessionId` for JWT and user info |
-| POST | `/auth/logout` | Logout and delete session |
+| POST | `/auth/signout` | Sign out and delete session |
 
 ---
 
@@ -247,11 +247,11 @@ Content-Type: application/json
 
 ---
 
-### 6.5 Logout
+### 6.5 Sign out
 
 **Request:**
 ```
-POST /auth/logout
+POST /auth/signout
 Content-Type: application/json
 
 {
@@ -262,9 +262,15 @@ Content-Type: application/json
 **Response (200):**
 ```json
 {
-  "success": true
+  "success": true,
+  "message": "Signed out"
 }
 ```
+
+**Notes:**
+- This deletes the server-side in-memory session.
+- If your app stores a JWT from `/auth/vipps/session`, you must also delete it locally on sign out.
+- Compatibility alias: `POST /auth/logout` is also supported and behaves the same as `/auth/signout`.
 
 ---
 
@@ -494,7 +500,7 @@ class VippsAuthManager {
     // Logout
     func logout(completion: @escaping (Bool) -> Void) {
         guard let sessionId = currentSessionId,
-              let url = URL(string: "\(baseURL)/auth/logout") else {
+              let url = URL(string: "\(baseURL)/auth/signout") else {
             completion(false)
             return
         }
